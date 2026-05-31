@@ -433,7 +433,13 @@
 
 const STORAGE_KEY = 'solo_hunters_v1';
 const MY_ADDR = 'bc1qvv8t2mh2cgcrl6yxysrrrft0l5h3y8f444gknf';
-const API_BASE = 'https://web.public-pool.io/api/client';
+// Public-Pool API endpoints. Try multiple paths because the official
+// instance has had different routes over time. We probe in order.
+const API_ENDPOINTS = [
+  'https://public-pool.io:40557/api/client/',
+  'https://api.allorigins.win/raw?url=' + encodeURIComponent('https://public-pool.io:40557/api/client/'),
+  'https://corsproxy.io/?' + encodeURIComponent('https://public-pool.io:40557/api/client/')
+];
 const REFRESH_INTERVAL = 60000;
 
 // Seed list – your address + room for community
@@ -461,15 +467,25 @@ function saveHunters(){
 }
 
 // ---------- API ----------
+// Try each endpoint until one works (handles CORS issues)
 async function fetchStats(addr){
-  try{
-    const res = await fetch(`${API_BASE}/${addr}`, { cache:'no-store' });
-    if(!res.ok) throw new Error(`HTTP ${res.status}`);
-    const data = await res.json();
-    return { ok:true, data };
-  }catch(err){
-    return { ok:false, error: err.message };
+  let lastErr = null;
+  for(const base of API_ENDPOINTS){
+    try{
+      const url = base + addr;
+      const res = await fetch(url, { cache:'no-store' });
+      if(!res.ok) { lastErr = `HTTP ${res.status}`; continue; }
+      const data = await res.json();
+      // Sanity check: API should return an object with workers or bestDifficulty
+      if(data && typeof data === 'object'){
+        return { ok:true, data };
+      }
+      lastErr = 'invalid response';
+    }catch(err){
+      lastErr = err.message;
+    }
   }
+  return { ok:false, error: lastErr || 'all endpoints failed' };
 }
 
 async function refreshAll(){
