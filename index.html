@@ -415,6 +415,7 @@
     <button class="filter-btn active" data-sort="best">🏆 Best Difficulty</button>
     <button class="filter-btn" data-sort="hashrate">⚡ Hashrate</button>
     <button class="filter-btn" data-sort="boot">🔥 Since Boot</button>
+    <button class="filter-btn" data-sort="shares">📊 Shares</button>
   </div>
 
   <div class="board" id="board"></div>
@@ -433,12 +434,9 @@
 
 const STORAGE_KEY = 'solo_hunters_v1';
 const MY_ADDR = 'bc1qvv8t2mh2cgcrl6yxysrrrft0l5h3y8f444gknf';
-// Public-Pool API endpoints. Try multiple paths because the official
-// instance has had different routes over time. We probe in order.
+// Use our own Vercel serverless function as proxy (avoids CORS, more reliable than public proxies)
 const API_ENDPOINTS = [
-  'https://public-pool.io:40557/api/client/',
-  'https://api.allorigins.win/raw?url=' + encodeURIComponent('https://public-pool.io:40557/api/client/'),
-  'https://corsproxy.io/?' + encodeURIComponent('https://public-pool.io:40557/api/client/')
+  '/api/stats?addr='
 ];
 const REFRESH_INTERVAL = 60000;
 
@@ -512,14 +510,23 @@ function getStats(addr){
   const workers = Array.isArray(d.workers) ? d.workers : [];
   const workerCount = d.workersCount || workers.length || 0;
   let hashrate = 0;
-  workers.forEach(w => { hashrate += num(w.hashRate); });
+  let shares = 0;
+  workers.forEach(w => {
+    hashrate += num(w.hashRate);
+    shares += num(w.sharesAccepted ?? w.shares ?? w.validShares ?? 0);
+  });
+  // Sometimes shares come at top level
+  if(shares === 0){
+    shares = num(d.sharesAccepted ?? d.shares ?? d.totalShares ?? 0);
+  }
 
   return {
     state: workerCount > 0 ? 'online' : 'offline',
     bestDiff,
     bestSinceBoot,
-    hashrate, // in H/s typically; we'll format
-    workerCount
+    hashrate,
+    workerCount,
+    shares
   };
 }
 
@@ -559,6 +566,13 @@ function fmtDiff(d){
   return d.toFixed(0);
 }
 
+function fmtNum(n){
+  if(!n) return '0';
+  if(n >= 1e6) return (n/1e6).toFixed(1) + 'M';
+  if(n >= 1e3) return (n/1e3).toFixed(1) + 'K';
+  return Math.round(n).toString();
+}
+
 function shortAddr(a){
   if(!a) return '';
   if(a.length <= 14) return a;
@@ -577,9 +591,11 @@ function render(){
   enriched.sort((a,b)=>{
     const av = sortKey === 'hashrate' ? (a.stats.hashrate||0)
              : sortKey === 'boot'     ? (a.stats.bestSinceBoot||0)
+             : sortKey === 'shares'   ? (a.stats.shares||0)
              : (a.stats.bestDiff||0);
     const bv = sortKey === 'hashrate' ? (b.stats.hashrate||0)
              : sortKey === 'boot'     ? (b.stats.bestSinceBoot||0)
+             : sortKey === 'shares'   ? (b.stats.shares||0)
              : (b.stats.bestDiff||0);
     return bv - av;
   });
@@ -620,16 +636,22 @@ function render(){
       if(currentSort === 'hashrate'){
         primaryVal = fmtHash(s.hashrate);
         primaryLabel = 'hashrate';
-        secondary = `Best: ${fmtDiff(s.bestDiff)}`;
+        secondary = `Best: ${fmtDiff(s.bestDiff)} • ${fmtNum(s.shares)} shares`;
       } else if(currentSort === 'boot'){
         primaryVal = fmtDiff(s.bestSinceBoot);
         primaryLabel = 'since boot';
-        secondary = `All-time: ${fmtDiff(s.bestDiff)}`;
+        secondary = `All-time: ${fmtDiff(s.bestDiff)} • ${fmtNum(s.shares)} shares`;
+      } else if(currentSort === 'shares'){
+        primaryVal = fmtNum(s.shares);
+        primaryLabel = 'shares';
+        secondary = s.state === 'online'
+          ? `<span class="live"><span class="pulse"></span>${fmtHash(s.hashrate)}</span>`
+          : `Best: ${fmtDiff(s.bestDiff)}`;
       } else {
         primaryVal = fmtDiff(s.bestDiff);
         primaryLabel = 'all-time best';
         secondary = s.state === 'online'
-          ? `<span class="live"><span class="pulse"></span>${fmtHash(s.hashrate)}</span>`
+          ? `<span class="live"><span class="pulse"></span>${fmtHash(s.hashrate)} • ${fmtNum(s.shares)} shares</span>`
           : `<span class="offline">offline</span>`;
       }
     }
